@@ -243,7 +243,7 @@ impl OpenAIAdapter {
 
 		// -- Build the basic payload
 
-		let OpenAIRequestParts { messages, tools } = Self::into_openai_request_parts(&model, chat_req)?;
+		let OpenAIRequestParts { messages, mut tools } = Self::into_openai_request_parts(&model, chat_req)?;
 		let mut payload = json!({
 			"model": model_name,
 			"messages": messages,
@@ -262,6 +262,18 @@ impl OpenAIAdapter {
 			&& let Some(keyword) = verbosity.as_keyword()
 		{
 			payload.x_insert("verbosity", keyword)?;
+		}
+
+		// -- Add web search tool if enabled
+		if let Some(_web_search) = options_set.web_search() {
+			let tool = json!({
+				"type": "web_search"
+			});
+			if tools.is_none() {
+				tools = Some(vec![tool]);
+			} else {
+				tools.as_mut().unwrap().push(tool);
+			}
 		}
 
 		// -- Tools

@@ -1,5 +1,5 @@
 use crate::adapter::adapters::support::get_api_key;
-use crate::adapter::openai::OpenAIStreamer;
+use crate::adapter::openai_resp::resp_streamer::OpenAIRespStreamer;
 use crate::adapter::openai_resp::resp_types::RespResponse;
 use crate::adapter::{Adapter, AdapterDispatcher, AdapterKind, ServiceType, WebRequestData};
 use crate::chat::{
@@ -78,14 +78,8 @@ impl Adapter for OpenAIRespAdapter {
 			headers.merge_with(extra_headers);
 		}
 
-		// -- for new v1/responses/ for now do not support stream
+		// -- streaming support
 		let stream = matches!(service_type, ServiceType::ChatStream);
-		if stream {
-			return Err(Error::AdapterNotSupported {
-				adapter_kind,
-				feature: "stream".into(),
-			});
-		}
 
 		// -- compute reasoning_effort and eventual trimmed model_name
 		// For now, just for openai AdapterKind
@@ -112,7 +106,8 @@ impl Adapter for OpenAIRespAdapter {
 		let mut payload = json!({
 			"store": false,
 			"model": model_name,
-			"input": messages
+			"input": messages,
+			"stream": stream
 		});
 
 		// -- Set reasoning effort
@@ -125,7 +120,38 @@ impl Adapter for OpenAIRespAdapter {
 			// TODO: needs to find a way to add summary: auto, concise, detailed
 		}
 
-		// -- Tools
+		// -- Add web search tool if enabled
+		let mut tools = tools;
+		if let Some(web_search_options) = chat_options.web_search() {
+			let mut web_search_tool = json!({
+				"type": "web_search"
+			});
+			
+			// Add optional parameters if provided
+			if let Some(max_uses) = web_search_options.max_uses {
+				web_search_tool["max_uses"] = json!(max_uses);
+			}
+			if let Some(ref allowed_domains) = web_search_options.allowed_domains {
+				if !allowed_domains.is_empty() {
+					web_search_tool["allowed_domains"] = json!(allowed_domains);
+				}
+			}
+			if let Some(ref blocked_domains) = web_search_options.blocked_domains {
+				if !blocked_domains.is_empty() {
+					web_search_tool["blocked_domains"] = json!(blocked_domains);
+				}
+			}
+			// Note: user_location is available in WebSearchOptions but not documented in OpenAI API
+			// so we're not including it for now
+			
+			if tools.is_none() {
+				tools = Some(vec![web_search_tool]);
+			} else {
+				tools.as_mut().unwrap().push(web_search_tool);
+			}
+		}
+
+		// -- Tools (now includes web_search if enabled)
 		if let Some(tools) = tools {
 			payload.x_insert("/tools", tools)?;
 		}
@@ -245,8 +271,8 @@ impl Adapter for OpenAIRespAdapter {
 		options_sets: ChatOptionsSet<'_, '_>,
 	) -> Result<ChatStreamResponse> {
 		let event_source = EventSource::new(reqwest_builder)?;
-		let openai_stream = OpenAIStreamer::new(event_source, model_iden.clone(), options_sets);
-		let chat_stream = ChatStream::from_inter_stream(openai_stream);
+		let openai_resp_stream = OpenAIRespStreamer::new(event_source, model_iden.clone(), options_sets);
+		let chat_stream = ChatStream::from_inter_stream(openai_resp_stream);
 
 		Ok(ChatStreamResponse {
 			model_iden,

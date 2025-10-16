@@ -6,6 +6,7 @@
 
 mod adapter_impl;
 mod resp_types;
+mod resp_streamer;
 
 pub use adapter_impl::*;
 
